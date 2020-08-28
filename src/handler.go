@@ -38,28 +38,35 @@ func GetResponseForMode() (response []byte) {
 
 	switch GlobalConfig.AgentStatus.Value {
 	case Normal:
-        averageCpuLoad := 0.0
-        if cpuImportance > 0 {
-            cpuLoad, err := cpu.Percent(0, false)
-            if err != nil {
-                return []byte("0%\n")
-            }
-            averageCpuLoad = cpuLoad[0]
-        }
-        usedRam := 0.0
-        if ramImportance > 0 {
-            v, err := mem.VirtualMemory()
-            if err != nil {
-                return []byte("0%\n")
-            }
-            usedRam = v.UsedPercent
-        }
+		usedRam := 0.0
+		averageCpuLoad := 0.0
+		utilization := 0.0
+		divider := 0.0
+
+		// Calculate CPU
+		if cpuImportance > 0 {
+			cpuLoad, err := cpu.Percent(0, false)
+			if err != nil {
+				return []byte("0%\n")
+			}
+			averageCpuLoad = cpuLoad[0]
+		}
+
+		// Calculate RAM
+		if ramImportance > 0 {
+			v, err := mem.VirtualMemory()
+			if err != nil {
+				return []byte("0%\n")
+			}
+			usedRam = v.UsedPercent
+		}
+
 		// If any resource is important and utilized 100% then everything else is not important
 		if averageCpuLoad > cpuThresholdValue && cpuThresholdValue > 0 || (usedRam > ramThresholdValue && ramThresholdValue > 0) {
 			response = []byte("0%\n")
+			return
 		}
-		utilization := 0.0
-		divider := 0.0
+
 		utilization = utilization + averageCpuLoad*cpuImportance
 		if cpuImportance > 0 {
 			divider++
@@ -71,32 +78,42 @@ func GetResponseForMode() (response []byte) {
 		}
 
 		for _, tcpService := range GlobalConfig.TCPService {
-            if tcpService.ImportanceFactor.ToFloat() > 0 {
-                sessionOccupied := GetSessionUtilized(tcpService.IPAddress.Value, tcpService.Port.Value, tcpService.MaxConnections.ToInt())
+			// Make sure our importance factor is greater than 0 otherwise ignore
+			if tcpService.ImportanceFactor.ToFloat() > 0 {
+				// Get session occupied
+				sessionOccupied := GetSessionUtilized(tcpService.IPAddress.Value, tcpService.Port.Value, tcpService.MaxConnections.ToInt())
 
-                utilization = utilization + sessionOccupied*tcpService.ImportanceFactor.ToFloat()
-                divider++
+				// Calculate utilization
+				utilization = utilization + sessionOccupied * tcpService.ImportanceFactor.ToFloat()
 
-                if sessionOccupied > 99 && tcpService.ImportanceFactor.ToFloat() == 1 {
-                    response = []byte("0%\n")
-                    break
-                }
-            }
+				// increase our divider
+				divider++
+
+				if sessionOccupied > 99 && tcpService.ImportanceFactor.ToFloat() == 1 {
+					response = []byte("0%\n")
+					return
+				}
+			}
 		}
 
 		utilization = utilization / divider
 
+		// Account for utilization less than 0
 		if utilization < 0 {
 			utilization = 0
 		}
+
+		// Account for utilization more than 0
 		if utilization > 100 {
 			utilization = 100
 		}
+
 		if returnIdle {
 			response = []byte(fmt.Sprintf("%v%%\n", math.Ceil(100-utilization)))
 		} else {
 			response = []byte(fmt.Sprintf("%v%%\n", math.Ceil(utilization)))
 		}
+
 		if initialRun {
 			response = append([]byte("up ready "), response...)
 		}
@@ -106,7 +123,7 @@ func GetResponseForMode() (response []byte) {
 		response = []byte("down\n")
 	case Halt:
 		response = []byte("down\n")
-    default:
+	default:
 		response = []byte("error\n")
 	}
 	return
